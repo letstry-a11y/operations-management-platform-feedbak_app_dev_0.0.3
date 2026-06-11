@@ -95,6 +95,10 @@ class SpeechRecognizer {
   /// 会话自动重连执行中标记,防止重入
   bool _isReconnecting = false;
 
+  /// WebSocket 握手进行中标记:握手失败会刷新 token 重试,
+  /// 期间的连接错误不上报 UI、不触发会话重连
+  bool _isHandshaking = false;
+
   /// 构造器：外部传入回调用于 UI/业务层处理结果与状态
   SpeechRecognizer({
     required this.appId,
@@ -149,24 +153,13 @@ class SpeechRecognizer {
 
     _pcmFile = File(pcmPath);
     _fileSink = _pcmFile.openWrite();
-    final url = _createUrl();
-    _channel = IOWebSocketChannel.connect(
-      Uri.parse(url),
-      headers: _createHeaders(),
-    );
-    _channelSubscription = _channel!.stream.listen(
-      _onMessage,
-      onDone: _onDone,
-      onError: _onError,
-      cancelOnError: true,
-    );
 
     try {
-      // 等待 WebSocket 握手完成；否则可能出现服务端未完成握手就收到数据/或直接返回 HTTP 200 JSON
-      await _channel!.ready.timeout(const Duration(seconds: 5));
+      // 建立连接并等待握手(token 过期会自动刷新重试一次)
+      await _connectChannel();
       if (_isClosed || _isStopping || _isChannelClosed) return;
       _isWsReady = true;
-      _log('Speech WebSocket connected: $url');
+      _log('Speech WebSocket connected: ${_createUrl()}');
 
       // 握手成功后先发送 start 配置消息（服务端会校验字段）
       _sendStartMessage();
@@ -430,8 +423,9 @@ class SpeechRecognizer {
   /// WebSocket 正常关闭回调
   void _onDone() {
     // 进入回调时通道标记仍为 false,说明不是我们主动关闭(服务端断开,
-    // 如单会话时长上限),录音未结束则重连续上
-    final unexpected = !_isChannelClosed && !_isStopping && !_isClosed;
+    // 如单会话时长上限),录音未结束则重连续上;握手期失败由 _connectChannel 处理
+    final unexpected =
+        !_isChannelClosed && !_isStopping && !_isClosed && !_isHandshaking;
     _isChannelClosed = true;
     if (!(_channelDoneCompleter?.isCompleted ?? true)) {
       _channelDoneCompleter?.complete();
@@ -439,6 +433,46 @@ class SpeechRecognizer {
     _log('WebSocket closed.');
     if (unexpected && _isRecognizing) {
       _restartSession();
+    }
+  }
+
+  /// 建立 WebSocket 并等待握手完成。
+  /// 握手失败最常见原因是 access token 过期——网关不升级协议、直接返回
+  /// HTTP 200 JSON;此时刷新 token 后重试一次,重试期间不向 UI 报错。
+  Future<void> _connectChannel() async {
+    Future<void> attempt() async {
+      _isChannelClosed = false;
+      _isWsReady = false;
+      _channelDoneCompleter = Completer<void>();
+      _channel = IOWebSocketChannel.connect(
+        Uri.parse(_createUrl()),
+        headers: _createHeaders(),
+      );
+      _channelSubscription = _channel!.stream.listen(
+        _onMessage,
+        onDone: _onDone,
+        onError: _onError,
+        cancelOnError: true,
+      );
+      // 等待 WebSocket 握手完成；否则可能出现服务端未完成握手就收到数据/或直接返回 HTTP 200 JSON
+      await _channel!.ready.timeout(const Duration(seconds: 5));
+    }
+
+    _isHandshaking = true;
+    try {
+      try {
+        await attempt();
+      } catch (e) {
+        _log('WS handshake failed, refresh token and retry: $e');
+        await _channelSubscription?.cancel();
+        _channelSubscription = null;
+        _channel = null;
+        final refreshed = await HttpService().refreshAccessToken();
+        if (!refreshed || _isClosed || _isStopping) rethrow;
+        await attempt();
+      }
+    } finally {
+      _isHandshaking = false;
     }
   }
 
@@ -454,20 +488,7 @@ class SpeechRecognizer {
       _channel = null;
       if (_isClosed || _isStopping) return;
 
-      _isChannelClosed = false;
-      _isWsReady = false;
-      _channelDoneCompleter = Completer<void>();
-      _channel = IOWebSocketChannel.connect(
-        Uri.parse(_createUrl()),
-        headers: _createHeaders(),
-      );
-      _channelSubscription = _channel!.stream.listen(
-        _onMessage,
-        onDone: _onDone,
-        onError: _onError,
-        cancelOnError: true,
-      );
-      await _channel!.ready.timeout(const Duration(seconds: 5));
+      await _connectChannel();
       if (_isClosed || _isStopping) {
         await _closeChannel();
         return;
@@ -490,7 +511,10 @@ class SpeechRecognizer {
       _channelDoneCompleter?.complete();
     }
     _log('WebSocket error: $error');
-    onError?.call(error.toString());
+    // 握手期错误(如 token 过期被拒)由 _connectChannel 刷新重试,不上报 UI
+    if (!_isHandshaking) {
+      onError?.call(error.toString());
+    }
   }
 
   /// 主动关闭 WebSocket（包含竞争条件下的重复 close 保护）

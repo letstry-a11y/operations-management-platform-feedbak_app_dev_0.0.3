@@ -59,6 +59,7 @@ keywords: [跳过语音, 序号记录, 标题总结, 50秒自动停止, 倒计�
 | FR2-6 | 最后 10s 倒计时提示 | 前 40s 状态栏仅显示「正在聆听…」(不计时);剩余 ≤10s 显示「N 秒后将自动停止」,每秒刷新;字体颜色、大小与常态一致(不用红色) | 录音第 41s 起出现倒计时文字,样式与平时一致 |
 | FR2-7 | 识别会话自动续连(缺陷修复) | 服务端因 VAD 判停下发 `final`、或意外断开(60s 上限/网络)而用户仍在录音时,`SpeechRecognizer` 自动重建 WebSocket 并重发 start 配置,识别文本经 `onResult` 持续累加;重连期间丢弃的音频帧为触发判停的静音段;用户主动停止/页面销毁不受影响;重连失败走 `onError` 复位界面 | 讲话中途停顿数秒后继续讲,后续内容仍能识别出字;UI 录音态与实际识别状态一致 |
 | FR2-8 | occurTime 防幻觉(缺陷修复) | ① 提示词:仅当口述明确出现时间表达才输出 `occurTime`,严禁以「当前时间」填充;并要求逐字摘录时间原话到 `occurTimeQuote`;② App 校验:摘录为空或在本次口述文本中找不到时丢弃 `occurTime`(日志打印 `drop occurTime`) | 口述未提时间 → 表单「发生时间」保持未选;口述「昨天下午三点」→ 正确换算填入 |
+| FR2-9 | 语音连接 token 过期自动刷新(缺陷修复) | access token 有效期 900s;HTTP 请求过期由 `HttpService` 自动刷新,但 WS 握手不走该机制,过期后网关不升级协议、直接回 HTTP 200 JSON 导致连接报错。新增 `_connectChannel()`:握手失败时调用 `HttpService().refreshAccessToken()` 刷新后自动重试一次(首次连接与会话续连共用);重试期间错误不上报 UI、不误触发重连,刷新仍失败才报错 | 登录超过 15 分钟后再录音/补录,连接成功无报错;refresh token 失效时才提示错误 |
 
 ## 4. 非功能需求(NFR)
 
@@ -74,7 +75,7 @@ keywords: [跳过语音, 序号记录, 标题总结, 50秒自动停止, 倒计�
 |---|---|
 | `lib/pages/feedback/voice_input_page.dart` | 跳过按钮(FR2-1)、序号记录(FR2-3)、50s 计时与倒计时(FR2-5/6)、occurTime 校验(FR2-8) |
 | `lib/pages/feedback/feedback_form.dart` | 删除语音输入界面与代码(FR2-2) |
-| `lib/utils/speech_recognizer.dart` | 会话自动续连 `_restartSession()`(FR2-7) |
+| `lib/utils/speech_recognizer.dart` | 会话自动续连 `_restartSession()`(FR2-7);握手 token 刷新重试 `_connectChannel()`(FR2-9) |
 | `lib/utils/kimi_client.dart` | 补充模式提示词(FR2-4)、occurTime/occurTimeQuote 规则(FR2-8) |
 | `lib/l10n/intl_zh.arb` / `intl_en.arb` | 新增 `skipToTextInput`、`autoStopCountdown` |
 | `doc/INDEX.md`、`doc/modules/feedback/*` | 文档同步 |
@@ -87,4 +88,5 @@ keywords: [跳过语音, 序号记录, 标题总结, 50秒自动停止, 倒计�
 4. 录音 41s 起出现常规样式倒计时,50s 自动停止并完成 AI 整理;
 5. 讲话停顿后继续讲,后续内容识别不丢;
 6. 不提时间则「发生时间」不被自动填充,提到相对时间可正确换算;
-7. 中英文切换文案正常;`flutter analyze` 无新增错误。
+7. 登录超过 15 分钟后录音/补录,语音连接不报 token 过期错误;
+8. 中英文切换文案正常;`flutter analyze` 无新增错误。
