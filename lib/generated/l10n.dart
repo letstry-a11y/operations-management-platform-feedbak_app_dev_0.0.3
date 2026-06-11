@@ -2353,6 +2353,26 @@ class S {
   String get reRecord {
     return Intl.message('重录', name: 'reRecord', desc: '', args: []);
   }
+
+  /// `跳过,直接文字输入`
+  String get skipToTextInput {
+    return Intl.message(
+      '跳过,直接文字输入',
+      name: 'skipToTextInput',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{seconds} 秒后将自动停止`
+  String autoStopCountdown(Object seconds) {
+    return Intl.message(
+      '$seconds 秒后将自动停止',
+      name: 'autoStopCountdown',
+      desc: '',
+      args: [seconds],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<S> {

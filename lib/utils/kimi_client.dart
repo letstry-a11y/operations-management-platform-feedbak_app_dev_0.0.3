@@ -16,31 +16,57 @@ class KimiClient {
   /// 把用户口述/合并后的内容整理为结构化反馈字段。
   /// 返回 Map(可能含 title / description / occurTime);
   /// 解析失败时返回 {description: 原文, _fallback: true}。
-  Future<Map<String, dynamic>> organizeToFeedback(String content) async {
+  ///
+  /// [existingRecords] 不为空时为「补充模式」:
+  /// - "description" 只整理本次口述内容(不重复已有记录,由调用方按序号拼接);
+  /// - "title" 总结已有记录 + 本次口述的全部要点。
+  Future<Map<String, dynamic>> organizeToFeedback(
+    String content, {
+    String? existingRecords,
+  }) async {
     final now = DateTime.now();
     final nowStr = _formatNow(now);
     const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
     final weekday = weekdays[now.weekday - 1];
 
+    final isSupplement =
+        existingRecords != null && existingRecords.trim().isNotEmpty;
+    final existingSection =
+        isSupplement
+            ? '\n已有反馈记录(已按序号整理,仅供总结标题参考,不要改写):\n$existingRecords\n'
+            : '';
+    final titleRule =
+        isSupplement
+            ? '- "title": 综合"已有反馈记录"与本次"用户口述内容"全部要点,总结成简短标题(中文不超过 20 字,英文不超过 12 词)'
+            : '- "title": 简短的问题标题(尽量简洁,中文不超过 20 字,英文不超过 12 词)';
+    final descRule =
+        isSupplement
+            ? '- "description": 只把本次"用户口述内容"整理为完整、通顺的描述,不要包含或重复"已有反馈记录"的内容'
+            : '- "description": 完整、通顺的问题描述';
+
     final prompt = '''你是医疗设备售后反馈整理助手。请把用户口述的反馈整理为结构化 JSON。
 
 当前时间:$nowStr($weekday)。
-
+$existingSection
 要求:
 1. "title" 和 "description" 必须使用与"用户口述内容"相同的语言书写,不要翻译。
    例如用户用英文口述,就用英文整理输出;用中文口述就用中文输出。
 2. 只输出一个 JSON 对象,不要任何解释文字,不要使用 markdown 代码块。
 3. 字段:
-   - "title": 简短的问题标题(尽量简洁,中文不超过 20 字,英文不超过 12 词)
-   - "description": 完整、通顺的问题描述
+   $titleRule
+   $descRule
    - "occurTime": 提取用户提到的"问题发生时间",解析为绝对时间,格式 "yyyy-MM-dd HH:mm:ss"。
+       · 仅当"用户口述内容"中明确出现了时间表达时才输出;
+         若完全没有提到发生时间,必须输出空字符串 "",
+         严禁用"当前时间"或任何猜测值填充。
        · 需支持相对/口语表达并基于"当前时间"换算成具体时间,例如:
          "今天/昨天/前天/大前天"、"N天前"、"上周三/这周一"、"上个月X号"、
          "早上/上午/中午/下午/傍晚/晚上/凌晨X点"、"半小时前/两小时前"等;
          英文如 "today/yesterday/last Wednesday/2 hours ago/this morning" 等同样支持。
        · 若只说了日期没说具体时刻,时间部分用 00:00:00。
        · 若只说了时刻没说哪天,默认取当天日期。
-       · 若用户完全没提到发生时间,输出空字符串 ""。
+   - "occurTimeQuote": 用户口述中提到发生时间的原话片段,必须从"用户口述内容"里逐字摘录,
+       不得改写;没有提到时间时输出空字符串 ""(此时 occurTime 也必须是 "")。
 4. 修正明显的口语和错别字,但不要编造用户未提及的信息。
 
 用户口述内容:

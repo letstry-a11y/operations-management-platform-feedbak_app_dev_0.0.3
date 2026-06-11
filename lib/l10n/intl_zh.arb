@@ -406,5 +406,12 @@
   "voiceEmptyHint": "没有识别到内容,请重试",
   "analyzeFailedFallback": "AI 分析失败,已按原文填入",
   "transcriptLabel": "识别内容",
-  "reRecord": "重录"
+  "reRecord": "重录",
+  "skipToTextInput": "跳过,直接文字输入",
+  "autoStopCountdown": "{seconds} 秒后将自动停止",
+  "@autoStopCountdown": {
+    "placeholders": {
+      "seconds": {}
+    }
+  }
 }

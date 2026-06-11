@@ -20,7 +20,9 @@ typedef String MessageIfAbsent(String messageStr, List<dynamic> args);
 class MessageLookup extends MessageLookupByLibrary {
   String get localeName => 'zh';
 
-  static String m0(count) => "正在上传 ${count} 个文件";
+  static String m0(seconds) => "${seconds} 秒后将自动停止";
+
+  static String m1(count) => "正在上传 ${count} 个文件";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -46,6 +48,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "audio": MessageLookupByLibrary.simpleMessage("音频"),
     "audioFileNotFound": MessageLookupByLibrary.simpleMessage("音频文件不存在"),
     "august": MessageLookupByLibrary.simpleMessage("八月"),
+    "autoStopCountdown": m0,
     "avatar": MessageLookupByLibrary.simpleMessage("头像"),
     "back": MessageLookupByLibrary.simpleMessage("返回"),
     "birthday": MessageLookupByLibrary.simpleMessage("生日"),
@@ -386,6 +389,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "settings": MessageLookupByLibrary.simpleMessage("设置"),
     "share": MessageLookupByLibrary.simpleMessage("分享"),
     "show": MessageLookupByLibrary.simpleMessage("显示"),
+    "skipToTextInput": MessageLookupByLibrary.simpleMessage("跳过,直接文字输入"),
     "sort": MessageLookupByLibrary.simpleMessage("排序"),
     "speak": MessageLookupByLibrary.simpleMessage("说话"),
     "start": MessageLookupByLibrary.simpleMessage("开始"),
@@ -433,7 +437,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "uploadAttachment": MessageLookupByLibrary.simpleMessage("上传附件"),
     "uploadFailed": MessageLookupByLibrary.simpleMessage("上传失败"),
     "uploading": MessageLookupByLibrary.simpleMessage("正在上传"),
-    "uploadingFiles": m0,
+    "uploadingFiles": m1,
     "urgent": MessageLookupByLibrary.simpleMessage("紧急"),
     "url": MessageLookupByLibrary.simpleMessage("网址"),
     "useOriginal": MessageLookupByLibrary.simpleMessage("使用原文件"),

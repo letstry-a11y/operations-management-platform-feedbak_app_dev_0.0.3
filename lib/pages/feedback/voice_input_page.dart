@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:medbot_ai_app/generated/l10n.dart';
 import 'package:medbot_ai_app/utils/kimi_client.dart';
@@ -24,6 +26,12 @@ class VoiceInputPage extends StatefulWidget {
 
 class _VoiceInputPageState extends State<VoiceInputPage>
     with SingleTickerProviderStateMixin {
+  /// 讯飞 IAT 单次会话上限 60s,提前 10s 自动停止留出余量(与 feedback_edit 一致)
+  static const int _maxRecordSeconds = 50;
+
+  /// 最后 N 秒进入倒计时提醒
+  static const int _countdownSeconds = 10;
+
   final KimiClient _kimi = KimiClient();
   SpeechRecognizer? _iflytek;
 
@@ -36,6 +44,9 @@ class _VoiceInputPageState extends State<VoiceInputPage>
   bool _isRecording = false;
   bool _isAnalyzing = false;
   String _transcript = '';
+
+  int _elapsedSeconds = 0;
+  Timer? _recordTicker;
 
   late final AnimationController _pulse;
 
@@ -77,9 +88,11 @@ class _VoiceInputPageState extends State<VoiceInputPage>
       if (!mounted) return;
       setState(() => _isRecording = true);
       _pulse.repeat(reverse: true);
+      _startRecordTicker();
     };
     recognizer.onError = (error) {
       if (!mounted) return;
+      _stopRecordTicker();
       _stopPulse();
       setState(() => _isRecording = false);
       _showSnack('${S.of(context).recognitionError}: $error');
@@ -94,6 +107,28 @@ class _VoiceInputPageState extends State<VoiceInputPage>
   void _stopPulse() {
     _pulse.stop();
     _pulse.reset();
+  }
+
+  /// 录音计时:每秒刷新;到 [_maxRecordSeconds] 自动停止并走 AI 整理流程。
+  void _startRecordTicker() {
+    _recordTicker?.cancel();
+    _elapsedSeconds = 0;
+    _recordTicker = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || !_isRecording) {
+        timer.cancel();
+        return;
+      }
+      setState(() => _elapsedSeconds++);
+      if (_elapsedSeconds >= _maxRecordSeconds) {
+        timer.cancel();
+        _stopRecording();
+      }
+    });
+  }
+
+  void _stopRecordTicker() {
+    _recordTicker?.cancel();
+    _recordTicker = null;
   }
 
   Future<void> _startRecording() async {
@@ -112,6 +147,7 @@ class _VoiceInputPageState extends State<VoiceInputPage>
 
   Future<void> _stopRecording() async {
     if (!_isRecording) return;
+    _stopRecordTicker();
     _stopPulse();
     setState(() => _isRecording = false);
     try {
@@ -141,29 +177,39 @@ class _VoiceInputPageState extends State<VoiceInputPage>
   Future<void> _analyzeAndGo(String transcript) async {
     setState(() => _isAnalyzing = true);
 
-    // 补充模式:把第二页现有内容 + 新语音一起送 Kimi,语义合并去重
-    String content = transcript;
-    if (_fromSupplement && _existingContent != null) {
-      final existingTitle = (_existingContent!['title'] ?? '').toString();
-      final existingDesc = (_existingContent!['description'] ?? '').toString();
-      final existing = [existingTitle, existingDesc]
-          .where((e) => e.trim().isNotEmpty)
-          .join('\n');
-      if (existing.isNotEmpty) {
-        content = '已有反馈内容:\n$existing\n\n补充内容:\n$transcript\n\n'
-            '请将以上内容合并去重,输出完整的结构化反馈。';
-      }
-    }
+    // 每次语音作为一条编号记录追加到描述;标题由 AI 总结全部内容。
+    final existingDesc = _normalizeNumbering(
+      (_existingContent?['description'] ?? '').toString().trim(),
+    );
+    final hasExisting = _fromSupplement && existingDesc.isNotEmpty;
+    final nextIndex = hasExisting ? _nextRecordIndex(existingDesc) : 1;
 
     Map<String, dynamic> fields;
+    var fallback = false;
     try {
-      final parsed = await _kimi.organizeToFeedback(content);
+      final parsed = await _kimi.organizeToFeedback(
+        transcript,
+        existingRecords: hasExisting ? existingDesc : null,
+      );
       fields = _normalizeFields(parsed);
+      _dropHallucinatedOccurTime(fields, parsed, transcript);
     } catch (e) {
       // ignore: avoid_print
       print('[VoicePage] kimi organize ERROR: $e');
-      fields = {'description': transcript, '_fallback': true};
+      fields = {};
+      fallback = true;
     }
+
+    // 本次整理结果(失败则用原文)作为第 nextIndex 条记录
+    final newDesc = (fields['description'] ?? '').toString().trim();
+    final record = '$nextIndex. ${newDesc.isEmpty ? transcript : newDesc}';
+    fields['description'] = hasExisting ? '$existingDesc\n$record' : record;
+    if (fallback) {
+      // 失败时不覆盖已有标题(不带 title 字段即保留第二页现状)
+      fields.remove('title');
+      fields['_fallback'] = true;
+    }
+
     if (!mounted) return;
     setState(() => _isAnalyzing = false);
 
@@ -184,6 +230,42 @@ class _VoiceInputPageState extends State<VoiceInputPage>
         },
       );
     }
+  }
+
+  /// occurTime 防幻觉:AI 必须同时给出口述中的时间原话摘录(occurTimeQuote),
+  /// 摘录为空或在本次口述里找不到时,视为编造,丢弃 occurTime。
+  void _dropHallucinatedOccurTime(
+    Map<String, dynamic> fields,
+    Map<String, dynamic> parsed,
+    String transcript,
+  ) {
+    if (fields['occurTime'] == null) return;
+    final quote = (parsed['occurTimeQuote'] ?? '').toString().trim();
+    final mentioned = quote.isNotEmpty &&
+        transcript.toLowerCase().contains(quote.toLowerCase());
+    if (!mentioned) {
+      // ignore: avoid_print
+      print('[VoicePage] drop occurTime(quote="$quote") not in transcript');
+      fields.remove('occurTime');
+    }
+  }
+
+  /// 已有描述若没有任何「N.」编号(如用户手动输入),整体视作第 1 条记录。
+  String _normalizeNumbering(String desc) {
+    if (desc.isEmpty) return desc;
+    final numbered = RegExp(r'^\s*\d+[.、]', multiLine: true).hasMatch(desc);
+    return numbered ? desc : '1. $desc';
+  }
+
+  /// 取已有记录的最大序号 + 1 作为本次记录序号。
+  int _nextRecordIndex(String numberedDesc) {
+    var maxIndex = 0;
+    for (final m in RegExp(r'^\s*(\d+)[.、]', multiLine: true)
+        .allMatches(numberedDesc)) {
+      final n = int.tryParse(m.group(1)!) ?? 0;
+      if (n > maxIndex) maxIndex = n;
+    }
+    return maxIndex + 1;
   }
 
   /// 把 AI 返回 Map 归一化为第二页可识别的字段名。
@@ -207,6 +289,32 @@ class _VoiceInputPageState extends State<VoiceInputPage>
     };
   }
 
+  /// 跳过语音,直接进入第二页文字输入。
+  /// 补充模式下第二页就在路由栈下方,直接返回(不带结果,不改动表单)。
+  Future<void> _skipToTextInput() async {
+    if (_isAnalyzing) return;
+    if (_isRecording) {
+      _stopRecordTicker();
+      _stopPulse();
+      setState(() => _isRecording = false);
+      try {
+        await _iflytek?.stopRecognition();
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    if (_fromSupplement) {
+      Navigator.of(context).pop();
+      return;
+    }
+    Navigator.of(context).pushReplacementNamed(
+      '/create-feedback',
+      arguments: {
+        if (_productId != null) 'product_id': _productId,
+        if (_feedbackType != null) 'feedback_type': _feedbackType,
+      },
+    );
+  }
+
   void _showSnack(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
@@ -214,6 +322,7 @@ class _VoiceInputPageState extends State<VoiceInputPage>
 
   @override
   void dispose() {
+    _stopRecordTicker();
     _pulse.dispose();
     _iflytek?.dispose();
     super.dispose();
@@ -223,9 +332,19 @@ class _VoiceInputPageState extends State<VoiceInputPage>
   Widget build(BuildContext context) {
     final s = S.of(context);
     const primary = Color(0xFF042A72);
-    final statusText = _isAnalyzing
-        ? s.analyzing
-        : (_isRecording ? s.listening : s.tapOrHoldToSpeak);
+
+    final remaining = _maxRecordSeconds - _elapsedSeconds;
+    final inCountdown = _isRecording && remaining <= _countdownSeconds;
+    final String statusText;
+    if (_isAnalyzing) {
+      statusText = s.analyzing;
+    } else if (_isRecording) {
+      // 前 40s 只显示聆听中;最后 10s 显示自动停止倒计时
+      statusText =
+          inCountdown ? s.autoStopCountdown(remaining) : s.listening;
+    } else {
+      statusText = s.tapOrHoldToSpeak;
+    }
 
     return Scaffold(
       appBar: AppBar(title: Text(s.voiceInputTitle)),
@@ -333,6 +452,14 @@ class _VoiceInputPageState extends State<VoiceInputPage>
                     ),
                   ),
                 ],
+              ),
+              // 不想语音输入时,直接进入文字输入页(补充模式下为直接返回表单)
+              const SizedBox(height: 12),
+              TextButton.icon(
+                onPressed: _isAnalyzing ? null : _skipToTextInput,
+                icon: const Icon(Icons.keyboard_alt_outlined, size: 20),
+                label: Text(s.skipToTextInput),
+                style: TextButton.styleFrom(foregroundColor: primary),
               ),
             ],
           ),

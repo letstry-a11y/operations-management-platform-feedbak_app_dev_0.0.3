@@ -404,5 +404,12 @@
   "voiceEmptyHint": "No speech recognized, please try again",
   "analyzeFailedFallback": "AI analysis failed; filled with the raw transcript",
   "transcriptLabel": "Transcript",
-  "reRecord": "Re-record"
+  "reRecord": "Re-record",
+  "skipToTextInput": "Skip and type instead",
+  "autoStopCountdown": "Auto-stop in {seconds}s",
+  "@autoStopCountdown": {
+    "placeholders": {
+      "seconds": {}
+    }
+  }
 }

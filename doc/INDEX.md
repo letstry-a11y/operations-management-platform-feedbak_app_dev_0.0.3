@@ -17,7 +17,7 @@
 | 模块 | 文档目录 | 主要源码 | 涉及后端接口 | 关键词 |
 |---|---|---|---|---|
 | 登录鉴权 auth | [modules/auth/](modules/auth/README.md) | `pages/login/*` | auth/login, auth/refresh, auth/sendCode, auth/resetPwd, user/register, user/changePwd, user/destroy | 登录/注册/找回密码/注销/验证码/国家选择 |
-| 反馈 feedback | [modules/feedback/](modules/feedback/README.md) | `pages/feedback/feedback_form.dart`, `device_select.dart`, `mine/feedback_edit.dart` | feedback(POST), feedback/{id}(PUT), feedback/attachments | 创建反馈/编辑/附件上传/设备选择/语音转写 |
+| 反馈 feedback | [modules/feedback/](modules/feedback/README.md) | `pages/feedback/voice_input_page.dart`, `feedback_form.dart`, `device_select.dart`, `mine/feedback_edit.dart` | feedback(POST), feedback/{id}(PUT), feedback/attachments | 创建反馈/编辑/附件上传/设备选择/语音输入页 |
 | 我的/工单 mine | [modules/mine/](modules/mine/README.md) | `pages/mine/*` | feedback/page, feedback/{id}, feedback/{id}/read, feedback/{id}/evaluate, feedback/unread-count, device/*, user/update | 反馈列表/详情/评价/设备管理/扫码绑定/用户编辑 |
 | 首页/指南 home-guide | [modules/home-guide/](modules/home-guide/README.md) | `pages/main_page.dart`, `guide_page.dart`, `home_page.dart`, `profile_page.dart` | user/info, user/logout | 底部导航/首页卡片/引导/个人中心 |
 | AI 聊天 chat-ai | [modules/chat-ai/](modules/chat-ai/README.md) | `utils/chat_stream_client.dart`, `coze.dart`, `pages/feedback/chat_page.dart` | /structured/convert/stream (SSE) | 流式对话/SSE/Coze/打字动画 |
@@ -32,7 +32,8 @@
 
 | Feature | 文档 | 状态 |
 |---|---|---|
-| 语音反馈双页(voice-feedback) | [SRS](features/voice-feedback/SRS.md) · [架构](features/voice-feedback/architecture.md) · [开发计划](features/voice-feedback/dev-plan.md) | 已批准,待开发 |
+| 语音反馈双页(voice-feedback) | [SRS](features/voice-feedback/SRS.md) · [架构](features/voice-feedback/architecture.md) · [开发计划](features/voice-feedback/dev-plan.md) | 一期已实现 |
+| 语音反馈双页 · 二期迭代 | [SRS-iteration-2](features/voice-feedback/SRS-iteration-2.md) | 已实现(2026-06-11) |
 
 ## 四、后端接口速查(完整)
 
@@ -48,15 +49,15 @@
 | POST | `user/changePwd` | 修改密码 | change_password.dart:128 |
 | POST | `user/destroy` | 注销账户 | destroy_account.dart:167 |
 | POST | `user/logout` | 登出 | profile_page.dart:319 |
-| POST | `feedback` | 创建反馈 | feedback_form.dart:1226 |
+| POST | `feedback` | 创建反馈 | feedback_form.dart:844 |
 | POST | `feedback/page` | 反馈分页列表 | feedback_list.dart:215 |
 | GET | `feedback/{id}` | 反馈详情 | feedback_detail/edit |
 | PUT | `feedback/{id}` | 更新反馈 | feedback_edit.dart:1397 |
 | PUT | `feedback/{id}/read` | 标记已读 | feedback_list/detail |
 | POST | `feedback/{id}/evaluate` | 评价反馈 | feedback_detail.dart:491 |
 | GET | `feedback/unread-count` | 未读数 | feedback_list.dart:102 |
-| POST(multipart) | `feedback/attachments` | 上传附件 | feedback_form.dart:342 |
-| DELETE | `feedback/attachments/{id}` | 删除附件 | feedback_form.dart:380 |
+| POST(multipart) | `feedback/attachments` | 上传附件 | feedback_form.dart:197 |
+| DELETE | `feedback/attachments/{id}` | 删除附件 | feedback_form.dart:234 |
 | POST | `device/list` | 设备列表 | device_management_page.dart:146 |
 | POST | `device/bind` | 绑定设备 | device_management_page.dart:259 |
 | DELETE | `device/unbind/{id}` | 解绑设备 | device_management_page.dart:288 |

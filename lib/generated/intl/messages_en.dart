@@ -20,7 +20,9 @@ typedef String MessageIfAbsent(String messageStr, List<dynamic> args);
 class MessageLookup extends MessageLookupByLibrary {
   String get localeName => 'en';
 
-  static String m0(count) => "Uploading ${count} files";
+  static String m0(seconds) => "Auto-stop in ${seconds}s";
+
+  static String m1(count) => "Uploading ${count} files";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -52,6 +54,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Audio file not found",
     ),
     "august": MessageLookupByLibrary.simpleMessage("August"),
+    "autoStopCountdown": m0,
     "avatar": MessageLookupByLibrary.simpleMessage("Avatar"),
     "back": MessageLookupByLibrary.simpleMessage("Back"),
     "birthday": MessageLookupByLibrary.simpleMessage("Birthday"),
@@ -510,6 +513,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "settings": MessageLookupByLibrary.simpleMessage("Settings"),
     "share": MessageLookupByLibrary.simpleMessage("Share"),
     "show": MessageLookupByLibrary.simpleMessage("Show"),
+    "skipToTextInput": MessageLookupByLibrary.simpleMessage(
+      "Skip and type instead",
+    ),
     "sort": MessageLookupByLibrary.simpleMessage("Sort"),
     "speak": MessageLookupByLibrary.simpleMessage("Speak"),
     "start": MessageLookupByLibrary.simpleMessage("Start"),
@@ -567,7 +573,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "uploadFailed": MessageLookupByLibrary.simpleMessage("Upload failed"),
     "uploading": MessageLookupByLibrary.simpleMessage("Uploading"),
-    "uploadingFiles": m0,
+    "uploadingFiles": m1,
     "urgent": MessageLookupByLibrary.simpleMessage("Urgent"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "useOriginal": MessageLookupByLibrary.simpleMessage("Use Original"),

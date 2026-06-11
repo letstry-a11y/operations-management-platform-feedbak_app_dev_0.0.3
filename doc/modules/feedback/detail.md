@@ -7,11 +7,11 @@ keywords: [创建反馈, 编辑, 附件, 两段式上传, 语音]
 
 # 反馈 — 详细设计
 
-## 创建反馈 FeedbackForm (feedback_form.dart, 2537 行)
-`StatefulWidget`,含 `TickerProviderStateMixin`(动画)。
+## 创建反馈 FeedbackForm (feedback_form.dart, 1923 行)
+`StatefulWidget`。**纯文字输入**:标题/问题描述不再带语音录音控件(`_MicButton`/`_VoiceBar`/`_RecognizingIndicator` 已删除);语音入口统一在第一页 `VoiceInputPage`(可点「跳过,直接文字输入」直达本页)。
 
 ### 入参
-经 `/create-feedback` 路由 `arguments` 传入:`product_id`、`feedback_type`(来自 `device_select.dart`)。
+经 `/create-feedback` 路由 `arguments` 传入:`product_id`、`feedback_type`(来自 `device_select.dart` / `voice_input_page.dart`);可选 `ai_fields`(语音页 AI 结构化结果,`_applyAiFields` 预填标题/描述/发生时间)。
 
 ### 核心状态
 - `_PendingAttachment`(:31-58):一个待上传/已上传附件的状态机
@@ -23,20 +23,20 @@ keywords: [创建反馈, 编辑, 附件, 两段式上传, 语音]
 ```
 1. 选图/拍视频/选文件 → File → _PendingAttachment(isUploading=true) 入列
 2. _uploadAttachment(file):
-   HttpService.postMultipart('feedback/attachments', {'file': file})  :342
+   HttpService.postMultipart('feedback/attachments', {'file': file})  :197
    → data{ attachmentId, presignedUrl, filename, fileType }
    → 回填 attachmentId, isUploading=false
-3. 删除已上传附件:DELETE feedback/attachments/{attachmentId}  :380
+3. 删除已上传附件:DELETE feedback/attachments/{attachmentId}  :234
 ```
 视频先 `video_compress` 压缩再上传。
 
-### 语音转写
-`SpeechRecognizer.onResult(text)` → 追加到描述 `TextEditingController`。
+### 语音(已迁出本页)
+创建表单不再内嵌语音转写;语音在第一页 `VoiceInputPage` 完成(识别 + AI 整理),结果经 `ai_fields` 预填,「继续补充」按钮 `_continueSupplement` 可回到语音页补充模式。编辑页 `feedback_edit.dart` 仍保留语音转写。
 
 ### 提交
 ```
-收集 {title, description, attachmentIds[], productId, feedbackType}
-→ HttpService.post('feedback', body)  :1226
+收集 {title, description, attachmentIds[], deviceType, feedbackType, deviceUdi, occurTime}
+→ HttpService.post('feedback', body)  :844
 → status==200 → 跳 /feedback_list
 ```
 
@@ -51,4 +51,4 @@ keywords: [创建反馈, 编辑, 附件, 两段式上传, 语音]
 ## 注意 / 扩展点
 - 附件 ID 与本地文件解耦,删除走补偿(`isRemoved`),提交时只收集有效 `attachmentId`。
 - 新增附件类型:扩展 `_uploadAttachment` 与预览组件映射。
-- 该文件超大,定位功能时建议按「附件 / 语音 / 提交 / UI 段」分区搜索关键词。
+- 该文件较大,定位功能时建议按「附件 / 提交 / UI 段」分区搜索关键词。

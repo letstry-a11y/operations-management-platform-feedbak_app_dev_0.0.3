@@ -92,6 +92,9 @@ class SpeechRecognizer {
   /// WebSocket 是否已关闭/不可用
   bool _isChannelClosed = false;
 
+  /// 会话自动重连执行中标记,防止重入
+  bool _isReconnecting = false;
+
   /// 构造器：外部传入回调用于 UI/业务层处理结果与状态
   SpeechRecognizer({
     required this.appId,
@@ -397,7 +400,13 @@ class SpeechRecognizer {
           onResult?.call(text);
         }
         if (type == 'final') {
-          _closeChannel();
+          if (_isStopping || _isClosed) {
+            _closeChannel();
+          } else {
+            // 讲话停顿触发服务端 VAD 判停、提前下发 final 并结束会话,
+            // 但用户仍在录音:自动开启新会话继续识别,文本由 onResult 持续累加
+            _restartSession();
+          }
         }
         return;
       }
@@ -420,11 +429,58 @@ class SpeechRecognizer {
 
   /// WebSocket 正常关闭回调
   void _onDone() {
+    // 进入回调时通道标记仍为 false,说明不是我们主动关闭(服务端断开,
+    // 如单会话时长上限),录音未结束则重连续上
+    final unexpected = !_isChannelClosed && !_isStopping && !_isClosed;
     _isChannelClosed = true;
     if (!(_channelDoneCompleter?.isCompleted ?? true)) {
       _channelDoneCompleter?.complete();
     }
     _log('WebSocket closed.');
+    if (unexpected && _isRecognizing) {
+      _restartSession();
+    }
+  }
+
+  /// 录音过程中服务端结束了会话(final/断开):关闭旧通道并开启新会话,
+  /// 让识别跟随录音继续。重连期间的音频帧会被丢弃(通常是触发判停的静音段)。
+  Future<void> _restartSession() async {
+    if (_isReconnecting || _isClosed || _isStopping) return;
+    _isReconnecting = true;
+    try {
+      await _closeChannel();
+      await _channelSubscription?.cancel();
+      _channelSubscription = null;
+      _channel = null;
+      if (_isClosed || _isStopping) return;
+
+      _isChannelClosed = false;
+      _isWsReady = false;
+      _channelDoneCompleter = Completer<void>();
+      _channel = IOWebSocketChannel.connect(
+        Uri.parse(_createUrl()),
+        headers: _createHeaders(),
+      );
+      _channelSubscription = _channel!.stream.listen(
+        _onMessage,
+        onDone: _onDone,
+        onError: _onError,
+        cancelOnError: true,
+      );
+      await _channel!.ready.timeout(const Duration(seconds: 5));
+      if (_isClosed || _isStopping) {
+        await _closeChannel();
+        return;
+      }
+      _isWsReady = true;
+      _sendStartMessage();
+      _log('Speech session restarted, recognition continues.');
+    } catch (e) {
+      _log('Speech session restart failed: $e');
+      onError?.call(e.toString());
+    } finally {
+      _isReconnecting = false;
+    }
   }
 
   /// WebSocket 发生异常回调

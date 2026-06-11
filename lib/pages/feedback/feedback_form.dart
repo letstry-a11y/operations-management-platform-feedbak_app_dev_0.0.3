@@ -1,17 +1,13 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_sound/flutter_sound.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:medbot_ai_app/generated/l10n.dart';
-import 'package:medbot_ai_app/utils/chat_stream_client.dart';
 import 'package:medbot_ai_app/utils/device_binding_repository.dart';
 import 'package:medbot_ai_app/utils/http_service.dart';
-import 'package:medbot_ai_app/utils/speech_recognizer.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:medbot_ai_app/widgets/device_id_card.dart';
 import 'package:medbot_ai_app/widgets/toast_utils.dart';
@@ -79,11 +75,7 @@ class FeedbackForm extends StatefulWidget {
   State<FeedbackForm> createState() => _FeedbackFormState();
 }
 
-class _FeedbackFormState extends State<FeedbackForm>
-    with TickerProviderStateMixin {
-  static const int _maxRecordSeconds = 50;
-  static const _flushInterval = Duration(milliseconds: 120);
-
+class _FeedbackFormState extends State<FeedbackForm> {
   final _formKey = GlobalKey<FormState>();
   final _deviceIdController = TextEditingController();
   final _titleController = TextEditingController();
@@ -91,16 +83,7 @@ class _FeedbackFormState extends State<FeedbackForm>
   final _deviceIdFocusNode = FocusNode();
   final _titleFocusNode = FocusNode();
   final _descriptionFocusNode = FocusNode();
-  final _descBuffer = StringBuffer();
   final _imagePicker = ImagePicker();
-
-  late final ChatStreamClient client;
-
-  FlutterSoundPlayer? _player;
-  SpeechRecognizer? _speechRecognizer;
-
-  late final AnimationController _micAnimationTitle;
-  late final AnimationController _micAnimationDescription;
 
   String? deviceType;
   String? feedbackType;
@@ -111,52 +94,9 @@ class _FeedbackFormState extends State<FeedbackForm>
   String? _dateTimeError;
 
   final List<_PendingAttachment> _selectedMediaAttachments = [];
-  String? _voicePathTitle;
-  String? _voicePathDescription;
-  int? _voiceDurationTitle;
-  int? _voiceDurationDescription;
-  // 语音文件对应的 attachmentId（标题 / 描述各一份）
-  int? _voiceAttachmentIdTitle;
-  int? _voiceAttachmentIdDescription;
-  int? titleAudio;
-  int? descriptionAudio;
 
   bool _isParamsLoaded = false;
-  bool _isRecordingTitle = false;
-  bool _isRecordingDescription = false;
-  bool _isRecognizing = false;
-  bool _isPlaying = false;
   bool _isSubmitting = false;
-
-  String? _playingPath;
-  String _speechRecognizerType = '';
-  String _recognizedDescription = '';
-
-  Timer? _flushTimer;
-  Timer? _recordTimeoutTimer;
-  StreamSubscription<String>? _aiSubscription;
-
-  @override
-  void initState() {
-    super.initState();
-    final baseUrl = HttpService().baseUrl;
-    final normalizedBaseUrl =
-        baseUrl.endsWith('/')
-            ? baseUrl.substring(0, baseUrl.length - 1)
-            : baseUrl;
-    client = ChatStreamClient(serverUrl: normalizedBaseUrl);
-    _player = FlutterSoundPlayer();
-    _micAnimationTitle = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 520),
-    );
-    _micAnimationDescription = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 520),
-    );
-    _initAudio();
-    _initSpeechRecognizer();
-  }
 
   @override
   void didChangeDependencies() {
@@ -187,104 +127,13 @@ class _FeedbackFormState extends State<FeedbackForm>
 
   @override
   void dispose() {
-    _recordTimeoutTimer?.cancel();
-    _flushTimer?.cancel();
-    final aiSubscription = _aiSubscription;
-    if (aiSubscription != null) {
-      aiSubscription.cancel();
-    }
     _deviceIdController.dispose();
     _titleController.dispose();
     _descriptionController.dispose();
     _deviceIdFocusNode.dispose();
     _titleFocusNode.dispose();
     _descriptionFocusNode.dispose();
-    final player = _player;
-    if (player != null) {
-      player.closePlayer();
-    }
-    final speechRecognizer = _speechRecognizer;
-    if (speechRecognizer != null) {
-      speechRecognizer.dispose();
-    }
-    _micAnimationTitle.dispose();
-    _micAnimationDescription.dispose();
     super.dispose();
-  }
-
-  void _initSpeechRecognizer() {
-    final recognizer = SpeechRecognizer(
-      appId: '397dfc06',
-      apiKey: '',
-      apiSecret: '',
-      onResult: _handleSpeechResult,
-      onError: (error) {
-        if (!mounted) return;
-        _showSnack('${S.of(context).recognitionError}: $error');
-      },
-      onAudioSaved: _handleAudioSaved,
-    );
-    _speechRecognizer = recognizer;
-    recognizer.init();
-  }
-
-  Future<void> _initAudio() async {
-    try {
-      var microphoneStatus = await Permission.microphone.status;
-      if (microphoneStatus.isDenied) {
-        microphoneStatus = await Permission.microphone.request();
-      }
-
-      if (microphoneStatus.isGranted) {
-        await _player?.openPlayer();
-      } else if (mounted) {
-        _showSnack(S.of(context).microphonePermissionRequired);
-      }
-    } catch (error) {
-      debugPrint('Audio init failed: $error');
-    }
-  }
-
-  void _handleSpeechResult(String text) {
-    if (!mounted) return;
-    print('Recognized text: $text');
-    if (_speechRecognizerType == 'title') {
-      _setControllerText(_titleController, text);
-      return;
-    }
-
-    if (text.isEmpty) {
-      _showSnack(S.of(context).contentEmptyPleaseReenter);
-      return;
-    }
-
-    _recognizedDescription += text;
-  }
-
-  void _handleAudioSaved(String path, int duration) {
-    if (!mounted) return;
-
-    setState(() {
-      if (_speechRecognizerType == 'title') {
-        _isRecordingTitle = false;
-        _voicePathTitle = path;
-        _voiceDurationTitle = duration;
-        _stopMicAnimation('title');
-      } else {
-        _isRecordingDescription = false;
-        _voicePathDescription = path;
-        _voiceDurationDescription = duration;
-        _stopMicAnimation('description');
-      }
-    });
-
-    // 语音文件保存到本地后，立即上传到 feedback/attachments，拿到 attachmentId
-    _uploadVoiceAttachment(path, _speechRecognizerType);
-
-    if (_speechRecognizerType == 'description' &&
-        _recognizedDescription.isNotEmpty) {
-      _streamRecognizedDescription();
-    }
   }
 
   String _videoTranscodingLabel(BuildContext context) {
@@ -489,161 +338,6 @@ class _FeedbackFormState extends State<FeedbackForm>
     }
   }
 
-  Future<void> _uploadVoiceAttachment(String path, String target) async {
-    // 语音也走同一套附件上传接口：feedback/attachments
-    final file = File(path);
-    if (!await file.exists()) return;
-
-    final previousId =
-        target == 'title'
-            ? _voiceAttachmentIdTitle
-            : _voiceAttachmentIdDescription;
-    if (previousId != null) {
-      try {
-        // 同一位置（title/description）新录一段语音时，旧的 attachmentId 先删掉
-        await _deleteAttachmentId(previousId);
-      } catch (error) {
-        debugPrint('Delete voice attachment failed: $error');
-      }
-    }
-
-    if (!mounted) return;
-    setState(() {
-      if (target == 'title') {
-        _voiceAttachmentIdTitle = null;
-        titleAudio = null;
-      } else {
-        _voiceAttachmentIdDescription = null;
-        descriptionAudio = null;
-      }
-    });
-
-    try {
-      final result = await _uploadAttachmentFile(file);
-      if (!mounted) return;
-      setState(() {
-        if (target == 'title') {
-          _voiceAttachmentIdTitle = result.attachmentId;
-          titleAudio = result.attachmentId;
-        } else {
-          _voiceAttachmentIdDescription = result.attachmentId;
-          descriptionAudio = result.attachmentId;
-        }
-      });
-    } catch (error) {
-      debugPrint('Upload voice attachment failed: $error');
-      if (!mounted) return;
-      setState(() {
-        if (target == 'title') {
-          _voicePathTitle = null;
-          _voiceDurationTitle = null;
-          _voiceAttachmentIdTitle = null;
-          titleAudio = null;
-        } else {
-          _voicePathDescription = null;
-          _voiceDurationDescription = null;
-          _voiceAttachmentIdDescription = null;
-          descriptionAudio = null;
-        }
-      });
-      _showSnack('${S.of(context).uploadFailed}: $error');
-    }
-  }
-
-  Future<void> _removeVoiceAttachment(String target) async {
-    final path = target == 'title' ? _voicePathTitle : _voicePathDescription;
-    final attachmentId =
-        target == 'title'
-            ? _voiceAttachmentIdTitle
-            : _voiceAttachmentIdDescription;
-    if (path != null && _playingPath == path) {
-      try {
-        await _player?.stopPlayer();
-      } catch (_) {}
-    }
-
-    if (!mounted) return;
-    setState(() {
-      if (target == 'title') {
-        _voicePathTitle = null;
-        _voiceDurationTitle = null;
-        _voiceAttachmentIdTitle = null;
-      } else {
-        _voicePathDescription = null;
-        _voiceDurationDescription = null;
-        _voiceAttachmentIdDescription = null;
-      }
-      if (_playingPath == path) {
-        _isPlaying = false;
-        _playingPath = null;
-      }
-    });
-
-    if (attachmentId == null) return;
-    try {
-      await _deleteAttachmentId(attachmentId);
-    } catch (error) {
-      debugPrint('Delete voice attachment failed: $error');
-    }
-  }
-
-  void _streamRecognizedDescription() {
-    setState(() {
-      _isRecognizing = true;
-      _descriptionController.clear();
-    });
-
-    final previousSubscription = _aiSubscription;
-    if (previousSubscription != null) {
-      previousSubscription.cancel();
-    }
-    _aiSubscription = slowStream(
-      client.askQuestion(_recognizedDescription, token: HttpService().token),
-    ).listen(
-      (word) {
-        print('word: $word');
-        // 1. 去掉双引号
-        String result = word.replaceAll('"', '');
-
-        // 2. 把 \n 转成真正换行
-        result = result.replaceAll(r'\n', '\n');
-        _descBuffer.write(result);
-        if (_flushTimer?.isActive ?? false) return;
-
-        _flushTimer = Timer(_flushInterval, () {
-          if (!mounted) return;
-          _appendDescriptionText(_descBuffer.toString());
-          _descBuffer.clear();
-        });
-      },
-      onError: (_) {
-        if (!mounted) return;
-        setState(() {
-          _setControllerText(_descriptionController, _recognizedDescription);
-          _isRecognizing = false;
-        });
-      },
-      onDone: () {
-        if (_descBuffer.isNotEmpty) {
-          _appendDescriptionText(_descBuffer.toString());
-          _descBuffer.clear();
-        }
-        if (!mounted) return;
-        setState(() {
-          _isRecognizing = false;
-          _recognizedDescription = '';
-        });
-      },
-    );
-  }
-
-  Stream<String> slowStream(Stream<String> input) async* {
-    await for (final word in input) {
-      yield word;
-      await Future.delayed(const Duration(milliseconds: 80));
-    }
-  }
-
   String get formattedDateTime {
     if (_selectedDateTime == null) return S.of(context).pleaseSelectTime;
     return DateFormat('yyyy-MM-dd HH:mm').format(_selectedDateTime!);
@@ -766,11 +460,6 @@ class _FeedbackFormState extends State<FeedbackForm>
       text: value,
       selection: TextSelection.collapsed(offset: value.length),
     );
-  }
-
-  void _appendDescriptionText(String value) {
-    final next = '${_descriptionController.text}$value';
-    _setControllerText(_descriptionController, next);
   }
 
   /// 应用来自语音页的 AI 结构化结果(预填 / 合并覆盖)。
@@ -917,133 +606,6 @@ class _FeedbackFormState extends State<FeedbackForm>
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  AnimationController _micAnimationFor(String target) {
-    return target == 'title' ? _micAnimationTitle : _micAnimationDescription;
-  }
-
-  void _stopMicAnimation(String target) {
-    _micAnimationFor(target)
-      ..stop()
-      ..reset();
-  }
-
-  Future<void> _startRecording(String target) async {
-    if (_isRecognizing && target == 'description') {
-      _showSnack(S.of(context).voiceRecognizingHint);
-      return;
-    }
-
-    if (_isRecordingTitle || _isRecordingDescription) {
-      _showSnack(S.of(context).currentlyRecognizing);
-      return;
-    }
-
-    try {
-      var microphoneStatus = await Permission.microphone.status;
-      if (!microphoneStatus.isGranted) {
-        microphoneStatus = await Permission.microphone.request();
-      }
-
-      if (!microphoneStatus.isGranted) {
-        if (mounted) _showSnack(S.of(context).microphonePermissionRequired);
-        return;
-      }
-
-      _speechRecognizerType = target;
-      if (target == 'description') _recognizedDescription = '';
-      await _speechRecognizer?.startRecognition();
-
-      if (!mounted) return;
-      setState(() {
-        if (target == 'title') {
-          _isRecordingTitle = true;
-        } else {
-          _isRecordingDescription = true;
-        }
-      });
-      _micAnimationFor(target).repeat(reverse: true);
-
-      _recordTimeoutTimer?.cancel();
-      _recordTimeoutTimer = Timer(
-        const Duration(seconds: _maxRecordSeconds),
-        () => _stopRecording(target),
-      );
-    } catch (error) {
-      debugPrint('Start recording failed: $error');
-      if (mounted) {
-        _showSnack('${S.of(context).recordingStartFailed}: $error');
-      }
-      _stopMicAnimation(target);
-    }
-  }
-
-  Future<void> _stopRecording(String target) async {
-    _recordTimeoutTimer?.cancel();
-    await _speechRecognizer?.stopRecognition();
-
-    if (!mounted) return;
-    setState(() {
-      if (target == 'title') {
-        _isRecordingTitle = false;
-      } else {
-        _isRecordingDescription = false;
-      }
-      _stopMicAnimation(target);
-    });
-  }
-
-  Future<void> _playVoice(String? path) async {
-    if (path == null) return;
-
-    try {
-      if (_isPlaying && _playingPath == path) {
-        await _player?.stopPlayer();
-        setState(() {
-          _isPlaying = false;
-          _playingPath = null;
-        });
-        return;
-      }
-
-      if (_isPlaying) await _player?.stopPlayer();
-
-      setState(() {
-        _isPlaying = true;
-        _playingPath = path;
-      });
-
-      final file = File(path);
-      if (!await file.exists()) {
-        if (!mounted) return;
-        setState(() {
-          _isPlaying = false;
-          _playingPath = null;
-        });
-        _showSnack(S.of(context).audioFileNotFound);
-        return;
-      }
-
-      await _player?.startPlayer(
-        fromURI: path,
-        whenFinished: () {
-          if (!mounted) return;
-          setState(() {
-            _isPlaying = false;
-            _playingPath = null;
-          });
-        },
-      );
-    } catch (error) {
-      debugPrint('Playback failed: $error');
-      if (!mounted) return;
-      setState(() {
-        _isPlaying = false;
-        _playingPath = null;
-      });
-      _showSnack('${S.of(context).playbackFailed}: $error');
-    }
   }
 
   Future<void> _pickDateTime() async {
@@ -1258,11 +820,7 @@ class _FeedbackFormState extends State<FeedbackForm>
       final hasUploadingMedia = _selectedMediaAttachments.any(
         (item) => item.isUploading || item.attachmentId == null,
       );
-      final hasUploadingVoice =
-          (_voicePathTitle != null && _voiceAttachmentIdTitle == null) ||
-          (_voicePathDescription != null &&
-              _voiceAttachmentIdDescription == null);
-      if (hasUploadingMedia || hasUploadingVoice) {
+      if (hasUploadingMedia) {
         if (!mounted) return;
         Navigator.of(context).pop();
         ToastUtils.showError(context, S.of(context).uploadFailed);
@@ -1274,9 +832,6 @@ class _FeedbackFormState extends State<FeedbackForm>
         ..._selectedMediaAttachments
             .map((item) => item.attachmentId)
             .whereType<int>(),
-        if (_voiceAttachmentIdTitle != null) _voiceAttachmentIdTitle!,
-        if (_voiceAttachmentIdDescription != null)
-          _voiceAttachmentIdDescription!,
       ];
 
       final occurTime =
@@ -1285,10 +840,6 @@ class _FeedbackFormState extends State<FeedbackForm>
               : DateFormat('yyyy-MM-dd HH:mm:ss').format(_selectedDateTime!);
 
       // 新建反馈：POST feedback
-      print('attachmentIds: $attachmentIds');
-      print(
-        'deviceType: ${{'title': _titleController.text.trim(), 'feedbackType': int.tryParse(feedbackType!) ?? 0, 'deviceType': deviceType, 'deviceUdi': _deviceIdController.text.trim(), 'description': _descriptionController.text.trim(), 'occurTime': occurTime, 'attachmentIds': attachmentIds, 'titleAudio': titleAudio, 'descriptionAudio': descriptionAudio}}',
-      );
       final response = await HttpService().post(
         'feedback',
         body: {
@@ -1299,8 +850,6 @@ class _FeedbackFormState extends State<FeedbackForm>
           'description': _descriptionController.text.trim(),
           'occurTime': occurTime,
           'attachmentIds': attachmentIds,
-          'titleAudio': titleAudio,
-          'descriptionAudio': descriptionAudio,
         },
       );
       final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -1532,114 +1081,42 @@ class _FeedbackFormState extends State<FeedbackForm>
                           const SizedBox(height: 14),
                           _Section(
                             title: '${S.of(context).problemTitle} *',
-                            titleTrailing: _MicButton(
-                              isRecording: _isRecordingTitle,
-                              controller: _micAnimationTitle,
-                              onTap: () {
-                                if (_isRecordingTitle) {
-                                  _stopRecording('title');
-                                } else {
-                                  _startRecording('title');
-                                }
+                            child: TextFormField(
+                              controller: _titleController,
+                              focusNode: _titleFocusNode,
+                              textInputAction: TextInputAction.next,
+                              decoration: InputDecoration(
+                                hintText:
+                                    S.of(context).pleaseEnterProblemTitle,
+                              ),
+                              validator:
+                                  (value) => _requiredText(
+                                    value,
+                                    S.of(context).pleaseEnterTitle,
+                                  ),
+                              onFieldSubmitted: (_) {
+                                _descriptionFocusNode.requestFocus();
                               },
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                TextFormField(
-                                  controller: _titleController,
-                                  focusNode: _titleFocusNode,
-                                  textInputAction: TextInputAction.next,
-                                  decoration: InputDecoration(
-                                    hintText:
-                                        S.of(context).pleaseEnterProblemTitle,
-                                  ),
-                                  validator:
-                                      (value) => _requiredText(
-                                        value,
-                                        S.of(context).pleaseEnterTitle,
-                                      ),
-                                  onFieldSubmitted: (_) {
-                                    _descriptionFocusNode.requestFocus();
-                                  },
-                                ),
-                                if (_voicePathTitle != null)
-                                  _VoiceBar(
-                                    label: S.of(context).titleRecording,
-                                    duration: _voiceDurationTitle,
-                                    isPlaying:
-                                        _isPlaying &&
-                                        _playingPath == _voicePathTitle,
-                                    onTap: () => _playVoice(_voicePathTitle),
-                                    onRemove:
-                                        () => _removeVoiceAttachment('title'),
-                                  ),
-                              ],
                             ),
                           ),
                           const SizedBox(height: 14),
                           _Section(
                             title: '${S.of(context).problemDescription} *',
-                            titleTrailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (_isRecognizing)
-                                  _RecognizingIndicator(
-                                    text: S.of(context).voiceRecognizing,
+                            child: TextFormField(
+                              controller: _descriptionController,
+                              focusNode: _descriptionFocusNode,
+                              minLines: 5,
+                              maxLines: 10,
+                              keyboardType: TextInputType.multiline,
+                              textInputAction: TextInputAction.newline,
+                              decoration: InputDecoration(
+                                hintText: S.of(context).pleaseEnterContent,
+                              ),
+                              validator:
+                                  (value) => _requiredText(
+                                    value,
+                                    S.of(context).pleaseEnterProblemContent,
                                   ),
-                                if (_isRecognizing) const SizedBox(width: 10),
-                                _MicButton(
-                                  isRecording: _isRecordingDescription,
-                                  controller: _micAnimationDescription,
-                                  isEnabled: !_isRecognizing,
-                                  onTap: () {
-                                    if (_isRecordingDescription) {
-                                      _stopRecording('description');
-                                    } else {
-                                      _startRecording('description');
-                                    }
-                                  },
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                TextFormField(
-                                  controller: _descriptionController,
-                                  focusNode: _descriptionFocusNode,
-                                  minLines: 5,
-                                  maxLines: 10,
-                                  enabled: !_isRecognizing,
-                                  keyboardType: TextInputType.multiline,
-                                  textInputAction: TextInputAction.newline,
-                                  decoration: InputDecoration(
-                                    hintText:
-                                        _isRecognizing
-                                            ? S.of(context).voiceRecognizingHint
-                                            : S.of(context).pleaseEnterContent,
-                                  ),
-                                  validator:
-                                      (value) => _requiredText(
-                                        value,
-                                        S.of(context).pleaseEnterProblemContent,
-                                      ),
-                                ),
-                                if (_voicePathDescription != null)
-                                  _VoiceBar(
-                                    label: S.of(context).descriptionRecording,
-                                    duration: _voiceDurationDescription,
-                                    isPlaying:
-                                        _isPlaying &&
-                                        _playingPath == _voicePathDescription,
-                                    onTap:
-                                        () => _playVoice(_voicePathDescription),
-                                    onRemove:
-                                        () => _removeVoiceAttachment(
-                                          'description',
-                                        ),
-                                  ),
-                              ],
                             ),
                           ),
                           const SizedBox(height: 14),
@@ -2107,15 +1584,10 @@ class _InfoChip extends StatelessWidget {
 }
 
 class _Section extends StatelessWidget {
-  const _Section({
-    required this.title,
-    required this.child,
-    this.titleTrailing,
-  });
+  const _Section({required this.title, required this.child});
 
   final String title;
   final Widget child;
-  final Widget? titleTrailing;
 
   @override
   Widget build(BuildContext context) {
@@ -2129,179 +1601,18 @@ class _Section extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: _textPrimary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              if (titleTrailing != null) titleTrailing!,
-            ],
+          Text(
+            title,
+            style: const TextStyle(
+              color: _textPrimary,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
           ),
           const SizedBox(height: 12),
           child,
         ],
       ),
-    );
-  }
-}
-
-class _MicButton extends StatelessWidget {
-  const _MicButton({
-    required this.isRecording,
-    required this.controller,
-    required this.onTap,
-    this.isEnabled = true,
-  });
-
-  final bool isRecording;
-  final bool isEnabled;
-  final AnimationController controller;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (context, _) {
-        final pulse = isRecording ? controller.value : 0.0;
-        return GestureDetector(
-          onTap: isEnabled ? onTap : null,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color:
-                  isEnabled
-                      ? Color.lerp(_accentColor, const Color(0xFFD64545), pulse)
-                      : const Color(0xFFCCD3DF),
-              boxShadow:
-                  isRecording
-                      ? [
-                        BoxShadow(
-                          color: const Color(0x47D64545),
-                          blurRadius: 18,
-                          spreadRadius: 2 + pulse * 5,
-                        ),
-                      ]
-                      : null,
-            ),
-            child: Icon(
-              isRecording ? Icons.stop_rounded : Icons.mic_none_rounded,
-              color: Colors.white,
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _VoiceBar extends StatelessWidget {
-  const _VoiceBar({
-    required this.label,
-    required this.duration,
-    required this.isPlaying,
-    required this.onTap,
-    required this.onRemove,
-  });
-
-  final String label;
-  final int? duration;
-  final bool isPlaying;
-  final VoidCallback onTap;
-  final VoidCallback onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Ink(
-        decoration: BoxDecoration(
-          color: const Color(0xFFEAF3FF),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      isPlaying
-                          ? Icons.graphic_eq_rounded
-                          : Icons.play_arrow_rounded,
-                      color: _brandColor,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '$label (${duration ?? 0}")',
-                      style: const TextStyle(
-                        color: _brandColor,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            IconButton(
-              onPressed: onRemove,
-              icon: const Icon(Icons.close_rounded, size: 18),
-              color: _brandColor,
-              splashRadius: 18,
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _RecognizingIndicator extends StatelessWidget {
-  const _RecognizingIndicator({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const SizedBox(
-          width: 14,
-          height: 14,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          text,
-          style: const TextStyle(
-            color: Color(0xFFD64545),
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
     );
   }
 }
